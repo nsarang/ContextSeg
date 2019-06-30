@@ -1,3 +1,5 @@
 .DS_Store
 .ipynb_checkpoints
 CIHP_instance-level_human_parsing.tar.gz
+__pycache__
+cihp_dataset.h5
