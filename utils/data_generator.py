@@ -1,9 +1,34 @@
 import numpy as np
-import keras.backend as K
+import keras
 from skimage.transform import rescale, resize
 from keras.preprocessing.image import Iterator, ImageDataGenerator
 from io import BytesIO
 from PIL import Image    
+
+
+
+
+
+class zipped_generators(keras.utils.Sequence):
+    def __init__(self, x_gen, y_gen):
+        self.x_gen = x_gen
+        self.y_gen = y_gen
+        
+    def __getitem__(self, index):
+        return (self.x_gen[index], self.y_gen[index])
+
+    def __len__(self):
+        return len(self.x_gen)
+
+
+def build_data_generators(X, y=None, **kwargs):
+    image_generator = DataGenerator(X, **kwargs)
+    if y is None:
+        return image_generator
+    
+    mask_generator = DataGenerator(y, isImage=False, **kwargs)
+    generator = zipped_generators(image_generator, mask_generator)
+    return generator
 
 
 class DataGenerator(Iterator):
@@ -25,17 +50,14 @@ class DataGenerator(Iterator):
         
         self.datagens = []
         ex_list = ['channel_shift_range', 'brightness_range',
-                    'zca_whitening', 'zca_epsilon', 'rescale'] 
-        if isImage:
-            args1 = {k:v for k,v in datagen_args.items() if k not in ex_list}
-            args2 = {k:v for k,v in datagen_args.items() if k in ex_list}
+                    'zca_whitening', 'zca_epsilon', 'rescale']         
+        args1 = {k:v for k,v in datagen_args.items() if k not in ex_list}
+        args2 = {k:v for k,v in datagen_args.items() if k in ex_list}
+        if len(args1):
             self.datagens.append(ImageDataGenerator(**args1))
-            if len(args2):
-                self.datagens.append(ImageDataGenerator(**args2))
-        else:
-            args = {k:v for k,v in datagen_args.items() if k not in ex_list}
-            self.datagens.append(ImageDataGenerator(**args))
-        
+        if len(args2) and isImage:
+            self.datagens.append(ImageDataGenerator(**args2))
+
         super(DataGenerator, self).__init__(len(data), batch_size, shuffle, seed)
     
 
@@ -59,7 +81,8 @@ class DataGenerator(Iterator):
             datagen.fit(imgs, seed=self.seed)
             imgs = datagen.flow(imgs, batch_size=self.batch_size,
                                 seed=self.seed, shuffle=False)[0]
-
+        
+        
         if self.isImage:
             imgs_scaled = np.empty((self.batch_size, *self.scaled_dim))
             for i,img in enumerate(imgs):
@@ -71,7 +94,7 @@ class DataGenerator(Iterator):
             labels = np.empty((self.batch_size, *self.input_dim[:-1], self.num_classes))
             for i,img in enumerate(imgs):
                 for c,ldef in enumerate(self.colormap):
-                    labels[i,:,:,c] = np.all(img.astype('uint') == np.array(ldef.color), axis=2)
+                    labels[i,:,:,c] = np.all(img == np.array(ldef.color), axis=2)
             return labels
     
 
@@ -90,7 +113,7 @@ class DataGenerator(Iterator):
             img = DataGenerator.random_crop(img, (min_sz, min_sz))
             img = img.resize(width_height_tuple, resample)
     
-        img = np.asarray(img, dtype=K.floatx())
+        img = np.asarray(img, dtype=keras.backend.floatx())
         return img
     
 
@@ -101,14 +124,3 @@ class DataGenerator(Iterator):
         x = np.random.randint(0, width - dx + 1)
         y = np.random.randint(0, height - dy + 1)
         return img.crop((x, y, x+dx, y+dy))
-
-
-
-def build_data_generators(X, y=None, **kwargs):
-    image_generator = DataGenerator(X, **kwargs)
-    if y is None:
-        return image_generator
-    
-    mask_generator = DataGenerator(y, isImage=False, **kwargs)
-    generator = zip(image_generator, mask_generator)
-    return generator

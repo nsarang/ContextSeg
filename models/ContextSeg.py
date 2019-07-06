@@ -1,6 +1,5 @@
 import keras.backend as K
-import keras.layers as layers
-import keras.models as models
+from keras import layers, models
 
 
 def ContextSeg(image_shape,
