@@ -8,58 +8,34 @@ from PIL import Image
 
 
 
-
-class zipped_generators(keras.utils.Sequence):
-    def __init__(self, x_gen, y_gen):
-        self.x_gen = x_gen
-        self.y_gen = y_gen
-        
-    def __getitem__(self, index):
-        return (self.x_gen[index], self.y_gen[index])
-
-    def __len__(self):
-        return len(self.x_gen)
-
-
-def build_data_generators(X, y=None, **kwargs):
-    image_generator = DataGenerator(X, **kwargs)
-    if y is None:
-        return image_generator
-    
-    mask_generator = DataGenerator(y, isImage=False, **kwargs)
-    generator = zipped_generators(image_generator, mask_generator)
-    return generator
-
-
 class DataGenerator(Iterator):
     # Generates data for Keras
-    def __init__(self, data, input_dim, batch_size, colormap, datagen_args,
-                 isImage=True, shuffle=True, seed=None):
+    def __init__(self, X, input_dim, batch_size, colormap, datagen_args,
+                 y=None, shuffle=True, seed=None):
         
         # Initialization
-        self.data = data
+        self.X = X
+        self.y = y
         self.input_dim = np.asarray(input_dim)
         self.scaled_dim = *(self.input_dim[:-1] // 4), self.input_dim[-1]
         self.batch_size = batch_size
         self.colormap = colormap
         self.num_classes = len(colormap)
-        self.isImage = isImage
 
         if seed is None:
             seed = np.random.randint(0, 1000)
         
-        self.datagens = []
-        ex_list = ['channel_shift_range', 'brightness_range',
-                    'zca_whitening', 'zca_epsilon', 'rescale']         
-        args1 = {k:v for k,v in datagen_args.items() if k not in ex_list}
-        args2 = {k:v for k,v in datagen_args.items() if k in ex_list}
-        if len(args1):
-            self.datagens.append(ImageDataGenerator(**args1))
-        if len(args2) and isImage:
-            self.datagens.append(ImageDataGenerator(**args2))
+        # Some args need to be seperate since they change the masks' colors and
+        # could interrupt color mappings. They also must be seperate for input 
+        # images since they the change order of np.RandomState
+        exclude_list = ['channel_shift_range', 'brightness_range',
+                        'zca_whitening', 'zca_epsilon', 'rescale']
+        args1 = {k:v for k,v in datagen_args.items() if k not in exclude_list}
+        args2 = {k:v for k,v in datagen_args.items() if k in exclude_list}
+        self.datagen_args = [args1, args2]
 
-        super(DataGenerator, self).__init__(len(data), batch_size, shuffle, seed)
-    
+        super(DataGenerator, self).__init__(len(X), batch_size, shuffle, seed)
+ 
 
     def next(self):
         # Keeps under lock only the mechanism which advances
@@ -69,33 +45,42 @@ class DataGenerator(Iterator):
         # The transformation of images is not under thread lock
         # so it can be done in parallel
         return self._get_batches_of_transformed_samples(index_array)
-    
+
 
     def _get_batches_of_transformed_samples(self, index_array):
         # Generates data containing batch_size samples
-        imgs = np.empty((self.batch_size, *self.input_dim))
-        for i,idx in enumerate(index_array):
-            imgs[i] = self.load_img(BytesIO(self.data[idx]), self.input_dim)
+        index_array = sorted(index_array)
+        imgs = self._get_augmented_images(self.X[index_array], self.datagen_args)
         
-        for datagen in self.datagens:
-            datagen.fit(imgs, seed=self.seed)
-            imgs = datagen.flow(imgs, batch_size=self.batch_size,
-                                seed=self.seed, shuffle=False)[0]
+        imgs_scaled = np.empty((self.batch_size, *self.scaled_dim))
+        for i,img in enumerate(imgs):
+            imgs_scaled[i] = rescale(img, 1/4, mode='reflect', multichannel=True,
+                                     anti_aliasing=True)         
+        if self.y is None:
+            return imgs, imgs_scaled
         
-        
-        if self.isImage:
-            imgs_scaled = np.empty((self.batch_size, *self.scaled_dim))
-            for i,img in enumerate(imgs):
-                imgs_scaled[i] = rescale(img, 1/4, mode='reflect', multichannel=True,
-                                         anti_aliasing=True)  
-            return [imgs, imgs_scaled]
+        masks = self._get_augmented_images(self.y[index_array], [self.datagen_args[0]])
+        one_hots = np.empty((self.batch_size, *self.input_dim[:-1], self.num_classes))
+        for i,img in enumerate(masks):
+            for c,ldef in enumerate(self.colormap):
+                one_hots[i,:,:,c] = np.all(img == np.array(ldef.color), axis=2)
+        return (imgs, imgs_scaled), one_hots
 
-        else:
-            labels = np.empty((self.batch_size, *self.input_dim[:-1], self.num_classes))
-            for i,img in enumerate(imgs):
-                for c,ldef in enumerate(self.colormap):
-                    labels[i,:,:,c] = np.all(img == np.array(ldef.color), axis=2)
-            return labels
+
+    def _get_augmented_images(self, binary_images, datagen_args):
+        seed=self.seed + self.total_batches_seen
+        np.random.seed(seed)
+
+        imgs = np.empty((self.batch_size, *self.input_dim))
+        for i,v in enumerate(binary_images):
+            imgs[i] = self.load_img(BytesIO(v), self.input_dim)
+        
+        for args in datagen_args:
+            datagen = ImageDataGenerator(**args)
+            datagen.fit(imgs, seed=seed)
+            imgs[:] = datagen.flow(imgs, batch_size=self.batch_size,
+                                   seed=seed, shuffle=False)[0]
+        return imgs
     
 
     @staticmethod
