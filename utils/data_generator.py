@@ -3,7 +3,8 @@ import keras
 from skimage.transform import rescale, resize
 from keras.preprocessing.image import Iterator, ImageDataGenerator
 from io import BytesIO
-from PIL import Image    
+from PIL import Image
+from .features import SobelOp
 import matplotlib.pylab as plt
 
 
@@ -73,11 +74,15 @@ class DataGenerator(Iterator):
                 batch_seed)
         
         imgs_scaled = np.empty((self.batch_size, *self.scaled_dim))
+        img_feats = np.empty((self.batch_size, *self.input_dim[:-1], 1))
         for i,img in enumerate(imgs):
             imgs_scaled[i] = rescale(img, 1/4, mode='reflect', multichannel=True,
-                                     anti_aliasing=True)         
+                                     anti_aliasing=True)
+            img_feats[i] = SobelOp(img)[...,np.newaxis]
+
+
         if self.y is None:
-            return [imgs, imgs_scaled]
+            return [imgs, img_feats, imgs_scaled]
         
         with self.lock:
             print('msk', self.seed, batch_seed)
@@ -87,10 +92,12 @@ class DataGenerator(Iterator):
 
         with self.lock:
             if index_array[0] % 12 == 0:
-                for i in range(self.batch_size):
-                    plt.figure(2*i)
+                for i in range(self.batch_size // 3):
+                    plt.figure(3*i)
                     plt.imshow(imgs[i])
-                    plt.figure(2*i+1)
+                    plt.figure(3*i+2)
+                    plt.imshow(img_feats[i])
+                    plt.figure(3*i+1)
                     plt.imshow(masks[i])
                     plt.show()
 
@@ -98,7 +105,7 @@ class DataGenerator(Iterator):
         for i,img in enumerate(masks):
             for c,ldef in enumerate(self.colormap):
                 one_hots[i,:,:,c] = np.all(img == np.array(ldef.color), axis=2)
-        return [imgs, imgs_scaled], one_hots
+        return [imgs, img_feats, imgs_scaled], one_hots
 
 
     def _get_augmented_images(self, binary_images, datagen_args, seed):

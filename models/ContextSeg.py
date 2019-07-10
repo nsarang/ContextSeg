@@ -7,14 +7,18 @@ def ContextSeg(image_shape,
     h, w, d = image_shape
     assert d == 3
 
-    input_orig = layers.Input(shape=(h, w, d), name='input1')
-    output_sh = _shallow_branch(input_orig)
+    input_orig = layers.Input(shape=(h, w, d), name='input_orig')
+    input_feats = layers.Input(shape=(h, w, 1), name='input_feats')
+    input_scaled = layers.Input(shape=(h//4, w//4, d), name='input_scaled')
 
-    input_scaled = layers.Input(shape=(h//4, w//4, d), name='input2')
+    merge_wfeats = layers.concatenate([input_orig, input_feats])
+
+    output_sh = _shallow_branch(merge_wfeats)
     output_dp = _deep_branch(input_scaled)
 
-    output = _fuse_branch(n_labels, output_sh, output_dp)
-    model = models.Model(inputs=[input_orig, input_scaled],
+    output = _fuse_branch(n_labels, output_sh, output_dp, input_feats)
+    
+    model = models.Model(inputs=[input_orig, input_feats, input_scaled],
                          outputs=output,
                          name='ContextSeg_model')
     return model
@@ -78,7 +82,7 @@ def _deep_branch(img_input, alpha=1):
     return x
 
 
-def _fuse_branch(n_labels, input_tensor1, input_tensor2):
+def _fuse_branch(n_labels, input_tensor1, input_tensor2, input_feats):
     x = _conv2d_block(input_tensor1, filters=128, kernel=1, # kernel=3
                       strides=1, padding='same', name='fs_sh_conv1')
     
@@ -90,7 +94,7 @@ def _fuse_branch(n_labels, input_tensor1, input_tensor2):
                       strides=1, padding='same', name='fs_dp_conv2')
     
     merged = layers.add([x, y])
-    merged = _inverted_res_block(merged, filters=192, alpha=1, stride=1,
+    merged = _inverted_res_block(merged, filters=128, alpha=1, stride=1,
                                  expansion=1, block_id=11)
     # merged = _sep_conv2d_block(merged, filters=192, kernel=3, strides=1,
     #                            dilation_rate=4, padding='same', name='fs_conv1')
@@ -108,6 +112,11 @@ def _fuse_branch(n_labels, input_tensor1, input_tensor2):
     #                            dilation_rate=4, padding='same', name='fs_conv3')
     merged = _deconv2d_block(merged, filters=64, kernel=3, strides=2,
                              padding='same', name='fs_deconv3')
+
+    merged = layers.concatenate([merged, input_feats])
+    merged = _inverted_res_block(merged, filters=64, alpha=1, stride=1,
+                                 expansion=6, block_id=14)
+
     merged = layers.Conv2D(n_labels,
                            kernel_size=3, # kernel=1
                            activation='softmax',
