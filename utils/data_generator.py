@@ -50,27 +50,33 @@ class DataGenerator(Iterator):
     def _get_batches_of_transformed_samples(self, index_array):
         # Generates data containing batch_size samples
         index_array = sorted(index_array)
-        imgs = self._get_augmented_images(self.X[index_array], self.datagen_args)
+        batch_seed = self.seed + index_array[0]
+        with self.lock:
+            imgs = self._get_augmented_images(self.X[index_array],
+                self.datagen_args,
+                batch_seed)
         
         imgs_scaled = np.empty((self.batch_size, *self.scaled_dim))
         for i,img in enumerate(imgs):
             imgs_scaled[i] = rescale(img, 1/4, mode='reflect', multichannel=True,
                                      anti_aliasing=True)         
         if self.y is None:
-            return imgs, imgs_scaled
+            return [imgs, imgs_scaled]
         
-        masks = self._get_augmented_images(self.y[index_array], [self.datagen_args[0]])
+        with self.lock:
+            masks = self._get_augmented_images(self.y[index_array],
+                [self.datagen_args[0]],
+                batch_seed)
         one_hots = np.empty((self.batch_size, *self.input_dim[:-1], self.num_classes))
         for i,img in enumerate(masks):
             for c,ldef in enumerate(self.colormap):
                 one_hots[i,:,:,c] = np.all(img == np.array(ldef.color), axis=2)
-        return (imgs, imgs_scaled), one_hots
+        return [imgs, imgs_scaled], one_hots
 
 
-    def _get_augmented_images(self, binary_images, datagen_args):
-        seed=self.seed + self.total_batches_seen
+    def _get_augmented_images(self, binary_images, datagen_args, seed):
         np.random.seed(seed)
-
+        
         imgs = np.empty((self.batch_size, *self.input_dim))
         for i,v in enumerate(binary_images):
             imgs[i] = self.load_img(BytesIO(v), self.input_dim)
