@@ -4,8 +4,8 @@ from skimage.transform import rescale, resize
 from keras.preprocessing.image import Iterator, ImageDataGenerator
 from io import BytesIO
 from PIL import Image
-from .features import SobelOp
 import matplotlib.pylab as plt
+from utils.features import SobelOp
 
 
 
@@ -45,6 +45,7 @@ class DataGenerator(Iterator):
                              'has length {length}'.format(idx=idx,
                                                           length=len(self)))
         with self.lock:
+            self.total_batches_seen += 1
             if self.index_array is None:
                 np.random.seed(self.seed + self.total_batches_seen)
                 self._set_index_array()
@@ -66,9 +67,8 @@ class DataGenerator(Iterator):
     def _get_batches_of_transformed_samples(self, index_array):
         # Generates data containing batch_size samples
         index_array = sorted(index_array)
-        batch_seed = self.seed + index_array[0]
+        batch_seed = self.seed + self.total_batches_seen
         with self.lock:
-            print('im', self.seed, batch_seed)
             imgs = self._get_augmented_images(self.X[index_array],
                 self.datagen_args,
                 batch_seed)
@@ -85,21 +85,9 @@ class DataGenerator(Iterator):
             return [imgs, img_feats, imgs_scaled]
         
         with self.lock:
-            print('msk', self.seed, batch_seed)
             masks = self._get_augmented_images(self.y[index_array],
                 [self.datagen_args[0]],
                 batch_seed)
-
-        with self.lock:
-            if index_array[0] % 12 == 0:
-                for i in range(self.batch_size // 3):
-                    plt.figure(3*i)
-                    plt.imshow(imgs[i])
-                    plt.figure(3*i+2)
-                    plt.imshow(img_feats[i])
-                    plt.figure(3*i+1)
-                    plt.imshow(masks[i])
-                    plt.show()
 
         one_hots = np.empty((self.batch_size, *self.input_dim[:-1], self.num_classes))
         for i,img in enumerate(masks):
@@ -110,12 +98,14 @@ class DataGenerator(Iterator):
 
     def _get_augmented_images(self, binary_images, datagen_args, seed):
         
-        imgs = np.empty((self.batch_size, *self.input_dim))
         np.random.seed(seed)
+        imgs = np.empty((self.batch_size, *self.input_dim))
         for i,v in enumerate(binary_images):
             imgs[i] = self.load_img(BytesIO(v), self.input_dim)
         
         for args in datagen_args:
+            # Because of memory leak, ImageDataGenerator needs to be
+            # instantiated and destroyed each time
             datagen = ImageDataGenerator(**args)
             datagen.fit(imgs, seed=seed)
             imgs[:] = datagen.flow(imgs, batch_size=self.batch_size,
