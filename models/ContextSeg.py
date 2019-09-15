@@ -96,20 +96,17 @@ def _fuse_branch(n_labels, input_tensor1, input_tensor2, input_feats):
     merged = layers.add([x, y])
     merged = _inverted_res_block(merged, filters=128, alpha=1, stride=1,
                                  expansion=1, block_id=11)
-    # merged = _sep_conv2d_block(merged, filters=192, kernel=3, strides=1,
-    #                            dilation_rate=4, padding='same', name='fs_conv1')
+    
     merged = _deconv2d_block(merged, filters=128, kernel=3, strides=2,
                              padding='same', name='fs_deconv1')
-    # merged = _sep_conv2d_block(merged, filters=64, kernel=3, strides=1,
-    #                            dilation_rate=4, padding='same', name='fs_conv2')
+  
     merged = _inverted_res_block(merged, filters=128, alpha=1, stride=1,
                                  expansion=1, block_id=12)
     merged = _deconv2d_block(merged, filters=64, kernel=3, strides=2,
                              padding='same', name='fs_deconv2')
     merged = _inverted_res_block(merged, filters=64, alpha=1, stride=1,
                                  expansion=1, block_id=13)
-    # merged = _sep_conv2d_block(merged, filters=64, kernel=3, strides=1,
-    #                            dilation_rate=4, padding='same', name='fs_conv3')
+    
     merged = _deconv2d_block(merged, filters=64, kernel=3, strides=2,
                              padding='same', name='fs_deconv3')
 
